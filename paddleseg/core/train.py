@@ -22,6 +22,21 @@ import paddle.nn.functional as F
 
 from paddleseg.utils import TimeAverager, calculate_eta, resume, logger
 from paddleseg.core.val import evaluate
+# profile
+import ctypes
+
+_cudart = ctypes.CDLL('libcudart.so')
+
+def cu_prof_start():
+  ret = _cudart.cudaProfilerStart()
+  if ret != 0:
+    raise Exception('cudaProfilerStart() returned %d' % ret)
+
+
+def cu_prof_stop():
+  ret = _cudart.cudaProfilerStop()
+  if ret != 0:
+    raise Exception('cudaProfilerStop() returned %d' % ret)
 
 
 def check_logits_losses(logits_list, losses):
@@ -60,7 +75,8 @@ def train(model,
           num_workers=0,
           use_vdl=False,
           losses=None,
-          keep_checkpoint_max=5):
+          keep_checkpoint_max=5,
+          use_amp=False):
     """
     Launch training.
 
@@ -128,31 +144,60 @@ def train(model,
             iter += 1
             if iter > iters:
                 break
+            """
+            # profile
+            if iter == 100:
+                cu_prof_start()
+            if iter == 110:
+                cu_prof_stop()
+                return
+            """
+
             reader_cost_averager.record(time.time() - batch_start)
             images = data[0]
             labels = data[1].astype('int64')
             edges = None
             if len(data) == 3:
                 edges = data[2].astype('int64')
+            if use_amp:
+                scaler = paddle.amp.GradScaler(
+                    init_loss_scaling=128.0)
+                with paddle.amp.auto_cast():
+                    if nranks > 1:
+                        logits_list = ddp_model(images)
+                    else:
+                        logits_list = model(images)
 
-            if nranks > 1:
-                logits_list = ddp_model(images)
+                    loss_list = loss_computation(
+                        logits_list=logits_list,
+                        labels=labels,
+                        losses=losses,
+                        edges=edges)
+                    loss = sum(loss_list)
+                    scaled_loss = scaler.scale(loss)  # scale the loss
+                    scaled_loss.backward()  # do backward
+                    scaler.minimize(optimizer, scaled_loss)  # update parameters
             else:
-                logits_list = model(images)
-            loss_list = loss_computation(
-                logits_list=logits_list,
-                labels=labels,
-                losses=losses,
-                edges=edges)
-            loss = sum(loss_list)
-            loss.backward()
+                if nranks > 1:
+                    logits_list = ddp_model(images)
+                else:
+                    logits_list = model(images)
 
-            optimizer.step()
+                loss_list = loss_computation(
+                    logits_list=logits_list,
+                    labels=labels,
+                    losses=losses,
+                    edges=edges)
+                loss = sum(loss_list)
+                loss.backward()
+
+                optimizer.step()
             lr = optimizer.get_lr()
             if isinstance(optimizer._learning_rate,
                           paddle.optimizer.lr.LRScheduler):
                 optimizer._learning_rate.step()
             model.clear_gradients()
+
             avg_loss += loss.numpy()[0]
             if not avg_loss_list:
                 avg_loss_list = [l for l in loss_list]

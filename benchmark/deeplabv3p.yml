@@ -3,7 +3,7 @@ iters: 500
 
 train_dataset:
   type: Cityscapes
-  dataset_root: data/cityscapes
+  dataset_root: /data/cityscapes/cityscapes_seg/
   transforms:
     - type: ResizeStepScaling
       min_scale_factor: 0.5
@@ -18,7 +18,7 @@ train_dataset:
 
 val_dataset:
   type: Cityscapes
-  dataset_root: data/cityscapes
+  dataset_root: /data/cityscapes/cityscapes_seg/
   transforms:
     - type: Normalize
   mode: val
