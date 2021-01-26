@@ -54,7 +54,8 @@ class DeepLabV3P(nn.Layer):
                  aspp_ratios=(1, 6, 12, 18),
                  aspp_out_channels=256,
                  align_corners=False,
-                 pretrained=None):
+                 pretrained=None,
+                 data_format="NCHW"):
         super().__init__()
 
         self.backbone = backbone
@@ -64,21 +65,26 @@ class DeepLabV3P(nn.Layer):
 
         self.head = DeepLabV3PHead(num_classes, backbone_indices,
                                    backbone_channels, aspp_ratios,
-                                   aspp_out_channels, align_corners)
+                                   aspp_out_channels, align_corners,
+                                   data_format)
 
         self.align_corners = align_corners
         self.pretrained = pretrained
         self.init_weight()
+        self.data_format = data_format
 
     def forward(self, x):
+        x = paddle.transpose(x, [0, 2, 3, 1]) if self.data_format == 'NHWC' else x
+        x.stop_gradient = x.stop_gradient
         feat_list = self.backbone(x)
         logit_list = self.head(feat_list)
         return [
             F.interpolate(
                 logit,
-                x.shape[2:],
+                size=x.shape[2:] if self.data_format == "NCHW" else x.shape[1:3],
                 mode='bilinear',
-                align_corners=self.align_corners) for logit in logit_list
+                align_corners=self.align_corners,
+                data_format = self.data_format) for logit in logit_list
         ]
 
     def init_weight(self):
@@ -107,7 +113,7 @@ class DeepLabV3PHead(nn.Layer):
     """
 
     def __init__(self, num_classes, backbone_indices, backbone_channels,
-                 aspp_ratios, aspp_out_channels, align_corners):
+                 aspp_ratios, aspp_out_channels, align_corners, data_format):
         super().__init__()
 
         self.aspp = layers.ASPPModule(
@@ -116,8 +122,9 @@ class DeepLabV3PHead(nn.Layer):
             aspp_out_channels,
             align_corners,
             use_sep_conv=True,
-            image_pooling=True)
-        self.decoder = Decoder(num_classes, backbone_channels[0], align_corners)
+            image_pooling=True,
+            data_format=data_format)
+        self.decoder = Decoder(num_classes, backbone_channels[0], align_corners, data_format)
         self.backbone_indices = backbone_indices
 
     def forward(self, feat_list):
@@ -228,29 +235,31 @@ class Decoder(nn.Layer):
         in_channels (int): The number of input channels in decoder module.
     """
 
-    def __init__(self, num_classes, in_channels, align_corners):
+    def __init__(self, num_classes, in_channels, align_corners, data_format):
         super(Decoder, self).__init__()
 
         self.conv_bn_relu1 = layers.ConvBNReLU(
-            in_channels=in_channels, out_channels=48, kernel_size=1)
+            in_channels=in_channels, out_channels=48, kernel_size=1, data_format=data_format)
 
         self.conv_bn_relu2 = layers.SeparableConvBNReLU(
-            in_channels=304, out_channels=256, kernel_size=3, padding=1)
+            in_channels=304, out_channels=256, kernel_size=3, padding=1, data_format=data_format)
         self.conv_bn_relu3 = layers.SeparableConvBNReLU(
-            in_channels=256, out_channels=256, kernel_size=3, padding=1)
+            in_channels=256, out_channels=256, kernel_size=3, padding=1, data_format=data_format)
         self.conv = nn.Conv2D(
-            in_channels=256, out_channels=num_classes, kernel_size=1)
+            in_channels=256, out_channels=num_classes, kernel_size=1, data_format=data_format)
 
         self.align_corners = align_corners
+        self.data_format = data_format
 
     def forward(self, x, low_level_feat):
         low_level_feat = self.conv_bn_relu1(low_level_feat)
         x = F.interpolate(
             x,
-            low_level_feat.shape[2:],
+            size=low_level_feat.shape[2:] if self.data_format == "NCHW" else low_level_feat.shape[1:3],
             mode='bilinear',
-            align_corners=self.align_corners)
-        x = paddle.concat([x, low_level_feat], axis=1)
+            align_corners=self.align_corners,
+            data_format = self.data_format)
+        x = paddle.concat([x, low_level_feat], axis=1 if self.data_format == "NCHW" else 3)
         x = self.conv_bn_relu2(x)
         x = self.conv_bn_relu3(x)
         x = self.conv(x)

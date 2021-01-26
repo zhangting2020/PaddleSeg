@@ -39,7 +39,8 @@ class ASPPModule(nn.Layer):
                  out_channels,
                  align_corners,
                  use_sep_conv=False,
-                 image_pooling=False):
+                 image_pooling=False,
+                 data_format="NCHW"):
         super().__init__()
 
         self.align_corners = align_corners
@@ -56,25 +57,28 @@ class ASPPModule(nn.Layer):
                 out_channels=out_channels,
                 kernel_size=1 if ratio == 1 else 3,
                 dilation=ratio,
-                padding=0 if ratio == 1 else ratio)
+                padding=0 if ratio == 1 else ratio,
+                data_format=data_format)
             self.aspp_blocks.append(block)
 
         out_size = len(self.aspp_blocks)
 
         if image_pooling:
             self.global_avg_pool = nn.Sequential(
-                nn.AdaptiveAvgPool2D(output_size=(1, 1)),
+                nn.AdaptiveAvgPool2D(output_size=(1, 1), data_format=data_format),
                 layers.ConvBNReLU(
-                    in_channels, out_channels, kernel_size=1, bias_attr=False))
+                    in_channels, out_channels, kernel_size=1, bias_attr=False, data_format=data_format))
             out_size += 1
         self.image_pooling = image_pooling
 
         self.conv_bn_relu = layers.ConvBNReLU(
             in_channels=out_channels * out_size,
             out_channels=out_channels,
-            kernel_size=1)
+            kernel_size=1,
+            data_format=data_format)
 
         self.dropout = nn.Dropout(p=0.1)  # drop rate
+        self.data_format = data_format
 
     def forward(self, x):
         outputs = []
@@ -82,21 +86,22 @@ class ASPPModule(nn.Layer):
             y = block(x)
             y = F.interpolate(
                 y,
-                x.shape[2:],
+                size=x.shape[2:] if self.data_format == "NCHW" else x.shape[1:3],
                 mode='bilinear',
-                align_corners=self.align_corners)
+                align_corners=self.align_corners,
+                data_format = self.data_format)
             outputs.append(y)
 
         if self.image_pooling:
             img_avg = self.global_avg_pool(x)
             img_avg = F.interpolate(
                 img_avg,
-                x.shape[2:],
+                size=x.shape[2:] if self.data_format == "NCHW" else x.shape[1:3],
                 mode='bilinear',
-                align_corners=self.align_corners)
+                align_corners=self.align_corners,
+                data_format = self.data_format)
             outputs.append(img_avg)
-
-        x = paddle.concat(outputs, axis=1)
+        x = paddle.concat(outputs, axis=1 if self.data_format == "NCHW" else 3)
         x = self.conv_bn_relu(x)
         x = self.dropout(x)
 
