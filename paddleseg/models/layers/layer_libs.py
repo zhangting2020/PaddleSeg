@@ -31,13 +31,14 @@ class ConvBNReLU(nn.Layer):
                  out_channels,
                  kernel_size,
                  padding='same',
+                 data_format="NCHW",
                  **kwargs):
         super().__init__()
 
         self._conv = nn.Conv2D(
-            in_channels, out_channels, kernel_size, padding=padding, **kwargs)
+            in_channels, out_channels, kernel_size, padding=padding, data_format=data_format, **kwargs)
 
-        self._batch_norm = SyncBatchNorm(out_channels)
+        self._batch_norm = SyncBatchNorm(out_channels, data_format=data_format)
 
     def forward(self, x):
         x = self._conv(x)
@@ -52,11 +53,12 @@ class ConvBN(nn.Layer):
                  out_channels,
                  kernel_size,
                  padding='same',
+                 data_format="NCHW",
                  **kwargs):
         super().__init__()
         self._conv = nn.Conv2D(
-            in_channels, out_channels, kernel_size, padding=padding, **kwargs)
-        self._batch_norm = SyncBatchNorm(out_channels)
+            in_channels, out_channels, kernel_size, padding=padding, data_format=data_format, **kwargs)
+        self._batch_norm = SyncBatchNorm(out_channels, data_format=data_format)
 
     def forward(self, x):
         x = self._conv(x)
@@ -65,7 +67,7 @@ class ConvBN(nn.Layer):
 
 
 class ConvReLUPool(nn.Layer):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, data_format="NCHW"):
         super().__init__()
         self.conv = nn.Conv2D(
             in_channels,
@@ -73,7 +75,8 @@ class ConvReLUPool(nn.Layer):
             kernel_size=3,
             stride=1,
             padding=1,
-            dilation=1)
+            dilation=1,
+            data_format=data_format)
 
     def forward(self, x):
         x = self.conv(x)
@@ -88,6 +91,7 @@ class SeparableConvBNReLU(nn.Layer):
                  out_channels,
                  kernel_size,
                  padding='same',
+                 data_format="NCHW",
                  **kwargs):
         super().__init__()
         self.depthwise_conv = ConvBN(
@@ -96,9 +100,10 @@ class SeparableConvBNReLU(nn.Layer):
             kernel_size=kernel_size,
             padding=padding,
             groups=in_channels,
+            data_format=data_format,
             **kwargs)
         self.piontwise_conv = ConvBNReLU(
-            in_channels, out_channels, kernel_size=1, groups=1)
+            in_channels, out_channels, kernel_size=1, groups=1, data_format=data_format)
 
     def forward(self, x):
         x = self.depthwise_conv(x)
