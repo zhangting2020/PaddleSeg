@@ -22,9 +22,10 @@ import paddle.nn.functional as F
 
 from paddleseg.utils import TimeAverager, calculate_eta, resume, logger
 from paddleseg.core.val import evaluate
+import paddle.fluid.core as core
+import paddle.fluid.profiler as profiler
 # profile
 import ctypes
-
 _cudart = ctypes.CDLL('libcudart.so')
 
 def cu_prof_start():
@@ -38,6 +39,20 @@ def cu_prof_stop():
   if ret != 0:
     raise Exception('cudaProfilerStop() returned %d' % ret)
 
+def add_nvtx_event(enable_nvtx, iter_id, begin_id, name, position="M"):
+    if not enable_nvtx:
+        return
+
+    if iter_id == begin_id and position == "F":
+        paddle.fluid.core.nvprof_start()
+        paddle.fluid.core.nvprof_enable_record_event()
+        paddle.fluid.core.nvprof_nvtx_push(name)
+    if iter_id > begin_id and iter_id < begin_id + 10:
+        paddle.fluid.core.nvprof_nvtx_pop()
+        paddle.fluid.core.nvprof_nvtx_push(name)
+    if iter_id == begin_id + 10 and position == "L":
+        paddle.fluid.core.nvprof_nvtx_pop()
+        paddle.fluid.core.nvprof_stop()
 
 def check_logits_losses(logits_list, losses):
     len_logits = len(logits_list)
@@ -137,6 +152,7 @@ def train(model,
     batch_cost_averager = TimeAverager()
     save_models = deque()
     batch_start = time.time()
+    enable_nvtx = True
 
     iter = start_iter
     while iter < iters:
@@ -144,14 +160,17 @@ def train(model,
             iter += 1
             if iter > iters:
                 break
-            """
             # profile
             if iter == 100:
-                cu_prof_start()
+                #cu_prof_start()
+                #core.nvprof_start()
+                #core.nvprof_enable_record_event()
+                profiler.start_profiler("All", "OpDetail")
             if iter == 110:
-                cu_prof_stop()
+                #cu_prof_stop()
+                #core.nvprof_stop()
+                profiler.stop_profiler("total", "./profile")
                 return
-            """
 
             reader_cost_averager.record(time.time() - batch_start)
             images = data[0]
@@ -162,7 +181,8 @@ def train(model,
             if use_amp:
                 scaler = paddle.amp.GradScaler(
                     init_loss_scaling=128.0)
-                with paddle.amp.auto_cast():
+                #with paddle.amp.auto_cast(custom_white_list={}, custom_black_list={"bilinear_interp_v2"}):
+                with paddle.amp.auto_cast(custom_white_list={"elementwise_add", "batch_norm"}, custom_black_list={"bilinear_interp_v2"}):
                     if nranks > 1:
                         logits_list = ddp_model(images)
                     else:

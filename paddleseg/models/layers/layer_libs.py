@@ -22,7 +22,8 @@ def SyncBatchNorm(*args, **kwargs):
     if paddle.get_device() == 'cpu':
         return nn.BatchNorm2D(*args, **kwargs)
     else:
-        return nn.SyncBatchNorm(*args, **kwargs)
+        return nn.BatchNorm2D(*args, **kwargs)
+        #return nn.SyncBatchNorm(*args, **kwargs)
 
 
 class ConvBNReLU(nn.Layer):
